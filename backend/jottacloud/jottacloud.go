@@ -268,23 +268,28 @@ service, for the official service on https://www.jottacloud.com/web/secure.`)
 		})
 	case "legacy": // configure a jottacloud backend using legacy authentication
 		m.Set("configVersion", fmt.Sprint(legacyConfigVersion))
-		return fs.ConfigConfirm("legacy_api", false, "config_machine_specific", `Do you want to create a machine specific API key?
-Rclone has it's own Jottacloud API KEY which works fine as long as one
+		return fs.ConfigConfirm("legacy_machine", false, "config_machine_specific", `Do you want to create a machine specific API key?
+Rclone has it's own Jottacloud API key which works fine as long as one
 only uses rclone on a single machine. When you want to use rclone with
 this account on more than one machine it's recommended to create a
 machine specific API key. These keys can NOT be shared between
 machines.`)
+	case "legacy_machine":
+		if conf.Result == "true" {
+			return fs.ConfigInputOptional("legacy_api", "config_machine", `The machine name to associate the API key with.
+If not supplied, a random name with prefix "rclone-" will be
+automatically generated.`)
+		}
+		return fs.ConfigGoto("legacy_username")
 	case "legacy_api":
 		srv := rest.NewClient(fshttp.NewClient(ctx))
-		if conf.Result == "true" {
-			deviceRegistration, err := registerDevice(ctx, srv)
-			if err != nil {
-				return nil, fmt.Errorf("failed to register device: %w", err)
-			}
-			m.Set(configClientID, deviceRegistration.ClientID)
-			m.Set(configClientSecret, obscure.MustObscure(deviceRegistration.ClientSecret))
-			fs.Debugf(nil, "Got clientID %q and clientSecret %q", deviceRegistration.ClientID, deviceRegistration.ClientSecret)
+		deviceRegistration, err := registerDevice(ctx, srv, conf.Result)
+		if err != nil {
+			return nil, fmt.Errorf("failed to register device: %w", err)
 		}
+		m.Set(configClientID, deviceRegistration.ClientID)
+		m.Set(configClientSecret, obscure.MustObscure(deviceRegistration.ClientSecret))
+		fs.Debugf(nil, "Got clientID %q and clientSecret %q", deviceRegistration.ClientID, deviceRegistration.ClientSecret)
 		return fs.ConfigInput("legacy_username", "config_username", "Username (e-mail address) of your account.")
 	case "legacy_username":
 		m.Set(configUsername, conf.Result)
@@ -592,20 +597,21 @@ func shouldRetry(ctx context.Context, resp *http.Response, err error) (bool, err
 }
 
 // registerDevice register a new device for use with the jottacloud API
-func registerDevice(ctx context.Context, srv *rest.Client) (reg *api.DeviceRegistrationResponse, err error) {
-	// random generator to generate random device names
-	seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-	randonDeviceNamePartLength := 21
-	randomDeviceNamePart := make([]byte, randonDeviceNamePartLength)
-	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	for i := range randomDeviceNamePart {
-		randomDeviceNamePart[i] = charset[seededRand.Intn(len(charset))]
+func registerDevice(ctx context.Context, srv *rest.Client, name string) (reg *api.DeviceRegistrationResponse, err error) {
+	if name == "" {
+		// random generator to generate random device names
+		seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
+		randonDeviceNamePartLength := 21
+		randomDeviceNamePart := make([]byte, randonDeviceNamePartLength)
+		charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		for i := range randomDeviceNamePart {
+			randomDeviceNamePart[i] = charset[seededRand.Intn(len(charset))]
+		}
+		name = "rclone-" + string(randomDeviceNamePart)
 	}
-	randomDeviceName := "rclone-" + string(randomDeviceNamePart)
-	fs.Debugf(nil, "Trying to register device '%s'", randomDeviceName)
-
+	fs.Debugf(nil, "Trying to register device '%s'", name)
 	values := url.Values{}
-	values.Set("device_id", randomDeviceName)
+	values.Set("device_id", name)
 
 	opts := rest.Opts{
 		Method:       "POST",
